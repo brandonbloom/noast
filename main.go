@@ -18,9 +18,12 @@ type Source interface {
 }
 
 func main() {
-	code := `(add 5 10)`
+	code := `
+(let x 2)
+(add x 3)
+`
 	//	code := `
-	//(define (fact x)
+	//(def (fact x)
 	//  (if (= x 0)
 	//    1
 	//    (* x (fact (- x 1)))))
@@ -86,6 +89,8 @@ func acceptExpr(ctx SourceContext) bool {
 		return false
 	case isDigit(c):
 		ctx.Push(expectNumber(ctx))
+	case isSymbolChar(c):
+		ctx.Push(ctx.Lookup(expectSymbol(ctx)))
 	case c == '(':
 		expectCall(ctx)
 	default:
@@ -101,7 +106,7 @@ func acceptWhite(ctx SourceContext) {
 }
 
 func isWhite(c rune) bool {
-	return c == ' '
+	return c == ' ' || c == '\n'
 }
 
 func isDigit(c rune) bool {
@@ -148,13 +153,34 @@ func acceptDigit(ctx SourceContext) (d int, ok bool) {
 
 func expectCall(ctx SourceContext) {
 	expectChar(ctx, '(')
+	acceptWhite(ctx)
 	name := expectSymbol(ctx)
+	acceptWhite(ctx)
 	switch name {
+	case "let":
+		ctx.Push(expectSymbol(ctx))
+		expectExpr(ctx)
+		ctx.Call(Let)
+
+	//case "def":
+	//	sym := expectSymbol(ctx)
+	//	compiler := NewCompiler()
+	//	compileCtx := struct {
+	//		SourceContext
+	//		Machine
+	//	}{
+	//		SourceContext: ctx,
+	//		Machine:       compiler,
+	//	}
+
 	case "add":
 		expectExpr(ctx)
 		expectExpr(ctx)
 		ctx.Call(Add)
+	default:
+		panic(fmt.Errorf("cannot call: %q", name))
 	}
+	acceptWhite(ctx)
 	expectChar(ctx, ')')
 }
 
