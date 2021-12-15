@@ -15,12 +15,18 @@ type SourceContext interface {
 type Source interface {
 	PeekChar() rune
 	NextChar()
+	SourceIndex() int
 }
 
 func main() {
+	//	code := `
+	//(let x 2)
+	//(add x 3)
+	//`
 	code := `
-(let x 2)
-(add x 3)
+(def inc (x)
+  (add x 1))
+(inc 5)
 `
 	//	code := `
 	//(def (fact x)
@@ -64,6 +70,10 @@ func (src *StringSource) NextChar() {
 	src.i++
 }
 
+func (src *StringSource) SourceIndex() int {
+	return src.i
+}
+
 func topLevel(ctx SourceContext) {
 	for acceptExpr(ctx) {
 		ctx.Call(Print)
@@ -85,12 +95,12 @@ func acceptExpr(ctx SourceContext) bool {
 	acceptWhite(ctx)
 	c := ctx.PeekChar()
 	switch {
-	case c == 0:
+	case c == 0, c == ')':
 		return false
 	case isDigit(c):
 		ctx.Push(expectNumber(ctx))
 	case isSymbolChar(c):
-		ctx.Push(ctx.Lookup(expectSymbol(ctx)))
+		ctx.Call(Lookup{expectSymbol(ctx)})
 	case c == '(':
 		expectCall(ctx)
 	default:
@@ -114,6 +124,7 @@ func isDigit(c rune) bool {
 }
 
 func expectChar(ctx SourceContext, c rune) {
+	acceptWhite(ctx)
 	x := ctx.PeekChar()
 	if x != c {
 		panic(fmt.Errorf("expected %q, got %q", c, x))
@@ -152,34 +163,49 @@ func acceptDigit(ctx SourceContext) (d int, ok bool) {
 }
 
 func expectCall(ctx SourceContext) {
+	expectList(ctx, func() {
+		name := expectSymbol(ctx)
+		acceptWhite(ctx)
+		switch name {
+
+		case "let":
+			ctx.Push(expectSymbol(ctx))
+			expectExpr(ctx)
+			ctx.Call(Let)
+
+		case "def":
+			sym := expectSymbol(ctx)
+			compiler := NewCompiler(ctx)
+			compileCtx := struct {
+				context.Context
+				Source
+				Machine
+			}{
+				Context: ctx,
+				Source:  ctx,
+				Machine: compiler,
+			}
+			expectParams(compileCtx)
+			acceptExpr(compileCtx)
+			ctx.Bind(sym, compiler.quote)
+			ctx.Push(nil)
+
+		case "add":
+			expectExpr(ctx)
+			expectExpr(ctx)
+			ctx.Call(Add)
+
+		default:
+			acceptExprs(ctx)
+			ctx.Call(ctx.Lookup(name).(Thunk))
+		}
+	})
+}
+
+func expectList(ctx SourceContext, f func()) {
 	expectChar(ctx, '(')
 	acceptWhite(ctx)
-	name := expectSymbol(ctx)
-	acceptWhite(ctx)
-	switch name {
-	case "let":
-		ctx.Push(expectSymbol(ctx))
-		expectExpr(ctx)
-		ctx.Call(Let)
-
-	//case "def":
-	//	sym := expectSymbol(ctx)
-	//	compiler := NewCompiler()
-	//	compileCtx := struct {
-	//		SourceContext
-	//		Machine
-	//	}{
-	//		SourceContext: ctx,
-	//		Machine:       compiler,
-	//	}
-
-	case "add":
-		expectExpr(ctx)
-		expectExpr(ctx)
-		ctx.Call(Add)
-	default:
-		panic(fmt.Errorf("cannot call: %q", name))
-	}
+	f()
 	acceptWhite(ctx)
 	expectChar(ctx, ')')
 }
@@ -208,4 +234,22 @@ func acceptSymbol(ctx SourceContext) string {
 
 func isSymbolChar(c rune) bool {
 	return 'a' <= c && c <= 'z'
+}
+
+func expectParams(ctx SourceContext) {
+	expectList(ctx, func() {
+		var syms []string
+		for {
+			sym := acceptSymbol(ctx)
+			if len(sym) == 0 {
+				break
+			}
+			syms = append(syms, sym)
+		}
+		for i := len(syms) - 1; i >= 0; i-- {
+			ctx.Push(syms[i])
+			ctx.Call(Swap)
+			ctx.Call(Let)
+		}
+	})
 }
